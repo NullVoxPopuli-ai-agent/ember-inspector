@@ -45,34 +45,40 @@ if (GlimmerValidator && !globalThis.emberInspectorApps) {
   tagValidate = GlimmerValidator.validate || GlimmerValidator.validateTag;
   track = GlimmerValidator.track;
 
-  // patch tagFor to add debug info, older versions already have _propertyKey
-  const tagFor = GlimmerValidator.tagFor;
-  GlimmerValidator.tagFor = function (...args) {
-    const tag = tagFor.call(this, ...args);
-    const [obj, key] = args;
-    if (
-      (!tag._propertyKey || !tag._object) &&
-      typeof obj === 'object' &&
-      typeof key === 'string'
-    ) {
-      tag._propertyKey = key;
-      tag._object = obj;
-    }
-    return tag;
-  };
-  const trackedData = GlimmerValidator.trackedData;
-  GlimmerValidator.trackedData = function (...args) {
-    const r = trackedData.call(this, ...args);
-    if (r.getter && args.length === 2) {
-      const [key] = args;
-      const getter = r.getter;
-      r.getter = function (self) {
-        GlimmerValidator.tagFor(self, key);
-        return getter.call(this, self);
-      };
-    }
-    return r;
-  };
+  try {
+    // patch tagFor to add debug info, older versions already have _propertyKey
+    const tagFor = GlimmerValidator.tagFor;
+    GlimmerValidator.tagFor = function (...args) {
+      const tag = tagFor.call(this, ...args);
+      const [obj, key] = args;
+      if (
+        (!tag._propertyKey || !tag._object) &&
+        typeof obj === 'object' &&
+        typeof key === 'string'
+      ) {
+        tag._propertyKey = key;
+        tag._object = obj;
+      }
+      return tag;
+    };
+    const trackedData = GlimmerValidator.trackedData;
+    GlimmerValidator.trackedData = function (...args) {
+      const r = trackedData.call(this, ...args);
+      if (r.getter && args.length === 2) {
+        const [key] = args;
+        const getter = r.getter;
+        r.getter = function (self) {
+          GlimmerValidator.tagFor(self, key);
+          return getter.call(this, self);
+        };
+      }
+      return r;
+    };
+  } catch {
+    // The module namespace has getter-only exports (recent ember-source
+    // classic builds, similar to Vite): skip the debug-info patches.
+    // Dependency names degrade gracefully without them.
+  }
 } else if (GlimmerReference) {
   tagValue = GlimmerReference.value;
   tagValidate = GlimmerReference.validate;
@@ -138,6 +144,79 @@ function isMandatorySetter(descriptor) {
     return true;
   }
   return false;
+}
+
+function reactivityArgEntries(report) {
+  const entries = [];
+  report.args.named.forEach((arg) => {
+    entries.push({ name: `@${arg.name}`, changed: arg.changed || false });
+    (arg.dependencies || []).forEach((dep) => {
+      const child = { child: dep.name };
+      if (dep.changed) {
+        child.changed = true;
+      }
+      entries.push(child);
+    });
+  });
+  report.args.positional.forEach((arg) => {
+    entries.push({ name: `@${arg.name}`, changed: arg.changed || false });
+  });
+  return entries;
+}
+
+function reactivitySummary(report) {
+  const causes = new Set();
+
+  [...report.args.named, ...report.args.positional].forEach((arg) => {
+    if (arg.changed) {
+      causes.add(`@${arg.name}`);
+    }
+    (arg.dependencies || []).forEach((dep) => {
+      if (dep.changed) {
+        causes.add(dep.name);
+      }
+    });
+  });
+  report.tracked.forEach((prop) => {
+    if (prop.changed) {
+      causes.add(`this.${prop.name}`);
+    }
+  });
+
+  return {
+    updateCount: report.updateCount,
+    lastRender: report.lastRender,
+    causes: [...causes],
+  };
+}
+
+function applyReactivityToProperties(mixins, report) {
+  const tracked = Object.create(null);
+  report.tracked.forEach((prop) => {
+    tracked[prop.name] = prop;
+  });
+
+  const argEntries = reactivityArgEntries(report);
+
+  mixins.forEach((mixin) => {
+    mixin.properties.forEach((item) => {
+      const t = tracked[item.name];
+      if (t) {
+        item.reactivity = { revision: t.revision, changed: t.changed };
+      }
+
+      // Surface the render node's args on the `args` property using the
+      // same dependent-keys UI computed properties use, unless something
+      // (e.g. a computed property) already claimed it.
+      if (
+        item.name === 'args' &&
+        argEntries.length &&
+        !item.dependentKeys?.length
+      ) {
+        item.dependentKeys = argEntries;
+      }
+    });
+  });
 }
 
 function getTrackedDependencies(object, property, tagInfo) {
@@ -299,7 +378,38 @@ export default class extends DebugPort {
           }
         });
       });
+
+      this.updateCurrentReactivity();
     }
+  }
+
+  /**
+   * When the inspected object is a render tree node (pinned from the
+   * component tree), push fresh reactivity info to the UI whenever the
+   * node re-renders: an updated summary (re-render count, what caused the
+   * re-render) plus per-property and per-arg changed flags.
+   */
+  updateCurrentReactivity() {
+    const { renderNodeId, objectId, lastUpdateCount } = this.currentObject;
+
+    if (!renderNodeId) {
+      return;
+    }
+
+    const report = this.getReactivityReport(renderNodeId);
+
+    if (!report || report.updateCount === lastUpdateCount) {
+      return;
+    }
+
+    this.currentObject.lastUpdateCount = report.updateCount;
+
+    this.sendMessage('updateReactivity', {
+      objectId,
+      reactivity: reactivitySummary(report),
+      properties: report.tracked,
+      args: reactivityArgEntries(report),
+    });
   }
 
   // eslint-disable-next-line ember/classic-decorator-hooks
@@ -404,7 +514,7 @@ export default class extends DebugPort {
       inspectById(message) {
         const obj = this.sentObjects[message.objectId];
         if (obj) {
-          this.sendObject(obj);
+          this.sendObject(obj, message.renderNodeId);
         }
       },
       inspectByContainerLookup(message) {
@@ -516,19 +626,49 @@ export default class extends DebugPort {
     }
   }
 
-  sendObject(object) {
+  sendObject(object, renderNodeId = null) {
     if (!this.canSend(object)) {
       throw new Error(
         `Can't inspect ${object}. Only Ember objects and arrays are supported.`,
       );
     }
     let details = this.mixinsForObject(object);
+    let reactivity = null;
+
+    // When the object is inspected as a render tree node (e.g. pinned in
+    // the component tree), join the render node's reactivity report into
+    // the existing property display: mark the properties that changed in
+    // the node's most recent re-render and expose args as dependent keys
+    // of the `args` property.
+    const report = this.getReactivityReport(renderNodeId);
+    if (report) {
+      this.currentObject.renderNodeId = renderNodeId;
+      this.currentObject.lastUpdateCount = report.updateCount;
+      applyReactivityToProperties(details.mixins, report);
+      reactivity = reactivitySummary(report);
+    }
+
     this.sendMessage('updateObject', {
       objectId: details.objectId,
       name: getObjectName(object),
       details: details.mixins,
       errors: details.errors,
+      reactivity,
     });
+  }
+
+  getReactivityReport(renderNodeId) {
+    if (!renderNodeId) {
+      return null;
+    }
+    try {
+      return (
+        this.namespace?.viewDebug?.renderTree?.getReactivity(renderNodeId) ??
+        null
+      );
+    } catch {
+      return null;
+    }
   }
 
   retainObject(object) {
