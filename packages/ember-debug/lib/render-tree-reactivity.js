@@ -1,7 +1,7 @@
 import { GlimmerReference, GlimmerValidator } from './ember.js';
-import getObjectName from './get-object-name.js';
 import { inspect, typeOf } from './type-check.js';
 import { getDependencyTags } from './tracked-tags.js';
+import { createTagNamer, labelForTagName } from './tag-names.js';
 
 // Read-only accessors into @glimmer/validator and @glimmer/reference.
 // Unlike the export patches in object-inspector.js, reading these is safe
@@ -188,13 +188,14 @@ export default class RenderTreeReactivity {
       tracked: [],
     };
 
-    this._collectArgs(report.args, node.args, baseline);
+    const nameForTag = createTagNamer(null, argsOwner(node));
+    this._collectArgs(report.args, node.args, baseline, nameForTag);
     this._collectTracked(report.tracked, node.instance, baseline);
 
     return report;
   }
 
-  _collectArgs(out, args, baseline) {
+  _collectArgs(out, args, baseline, nameForTag) {
     if (!args || typeof args !== 'object') {
       return;
     }
@@ -214,7 +215,12 @@ export default class RenderTreeReactivity {
           Object.keys(inner).forEach((innerName) => {
             if (isRef(inner[innerName])) {
               out.named.push(
-                this._describeRef(innerName, inner[innerName], baseline),
+                this._describeRef(
+                  innerName,
+                  inner[innerName],
+                  baseline,
+                  nameForTag,
+                ),
               );
             }
           });
@@ -222,11 +228,13 @@ export default class RenderTreeReactivity {
         }
       }
 
-      out.named.push(this._describeRef(name, ref, baseline));
+      out.named.push(this._describeRef(name, ref, baseline, nameForTag));
     });
 
     positional.forEach((ref, index) => {
-      out.positional.push(this._describeRef(String(index), ref, baseline));
+      out.positional.push(
+        this._describeRef(String(index), ref, baseline, nameForTag),
+      );
     });
   }
 
@@ -241,7 +249,7 @@ export default class RenderTreeReactivity {
     }
   }
 
-  _describeRef(name, ref, baseline) {
+  _describeRef(name, ref, baseline, nameForTag) {
     const entry = { name, dependencies: [] };
 
     if (!isRef(ref)) {
@@ -264,22 +272,26 @@ export default class RenderTreeReactivity {
     if (tag) {
       entry.revision = valueForTag(tag);
       entry.changed = baseline !== null && entry.revision > baseline;
-      entry.dependencies = this._collectTagDependencies(tag, baseline);
+      entry.dependencies = this._collectTagDependencies(
+        tag,
+        baseline,
+        nameForTag,
+      );
     }
 
     return entry;
   }
 
-  _collectTagDependencies(tag, baseline) {
+  _collectTagDependencies(tag, baseline, nameForTag) {
     const tags = getDependencyTags(tag, null);
     const byName = new Map();
 
     tags.forEach((t) => {
-      if (!t._propertyKey) {
+      const tagName = nameForTag(t);
+      if (!tagName) {
         return;
       }
-      const objectName = t._object ? getObjectName(t._object) : '';
-      const name = (objectName ? `${objectName}.` : '') + t._propertyKey;
+      const name = labelForTagName(tagName);
       const revision = valueForTag(t);
       const existing = byName.get(name);
       if (!existing || revision > existing.revision) {
@@ -324,4 +336,17 @@ export default class RenderTreeReactivity {
 
     out.sort((a, b) => b.revision - a.revision);
   }
+}
+
+/**
+ * The args of a render node come from the nearest ancestor with an instance,
+ * so the tracked state behind them is on that instance.
+ */
+function argsOwner(node) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (parent.instance && typeof parent.instance === 'object') {
+      return parent.instance;
+    }
+  }
+  return null;
 }

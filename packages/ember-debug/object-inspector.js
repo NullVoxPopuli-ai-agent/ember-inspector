@@ -27,6 +27,7 @@ import emberNames from './lib/ember-object-names.js';
 import getObjectName from './lib/get-object-name.js';
 import getRoute from './lib/get-route.js';
 import { getDependencyTags } from './lib/tracked-tags.js';
+import { createTagNamer, labelForTagName } from './lib/tag-names.js';
 
 let tagValue, tagValidate, track, tagForProperty;
 
@@ -85,47 +86,6 @@ if (InternalsMetal) {
 }
 
 const HAS_GLIMMER_TRACKING = tagValue && tagValidate && track && tagForProperty;
-
-// Reading exports is safe in every build type (unlike the patches above).
-const tagMetaFor = GlimmerValidator?.tagMetaFor;
-
-/**
- * Build a tag -> human-readable-name map for the dependencies an object's
- * getters can consume, without relying on the `_propertyKey` annotations
- * (which the patched `tagFor` can't provide when the app's modules are
- * inlined at build time, as in recent ember-source):
- *
- * - the validator's tag meta names every consumed own property (`this.x`)
- * - the args proxy's custom tags name named args (`args.x`)
- */
-function localTagNames(object) {
-  const names = new Map();
-
-  if (tagMetaFor) {
-    try {
-      tagMetaFor(object).forEach((t, key) => {
-        if (typeof key === 'string') {
-          names.set(t, `this.${key}`);
-        }
-      });
-    } catch {
-      // ignore
-    }
-  }
-
-  const args = object.args;
-  if (args && typeof args === 'object' && tagForProperty) {
-    try {
-      Object.keys(args).forEach((key) => {
-        names.set(tagForProperty(args, key), `args.${key}`);
-      });
-    } catch {
-      // ignore
-    }
-  }
-
-  return names;
-}
 
 const keys = Object.keys;
 
@@ -255,7 +215,7 @@ function reactivitySummary(report) {
   });
   report.tracked.forEach((prop) => {
     if (prop.changed) {
-      causes.add(`this.${prop.name}`);
+      causes.add(labelForTagName({ group: 'this', key: prop.name }));
     }
   });
 
@@ -318,69 +278,52 @@ function getTrackedDependencies(object, property, tagInfo) {
   }
   if (HAS_GLIMMER_TRACKING) {
     const ownTag = tagForProperty(object, property);
-    const tagNames = localTagNames(object);
+    const nameForTag = createTagNamer(object);
     const tags = getDependencyTags(tag, ownTag);
-    const mapping = {};
-    let maxRevision = tagValue(tag);
+    const hasChange =
+      (tagInfo.revision && tagValue(tag) !== tagInfo.revision) || false;
+
+    /** group → (key → revision) */
+    const groups = new Map();
     tags.forEach((t) => {
-      let p;
-      if (t._propertyKey) {
-        p = (t._object ? getObjectName(t._object) + '.' : '') + t._propertyKey;
-      } else {
-        p = tagNames.get(t);
-      }
-      if (!p) {
+      const name = nameForTag(t);
+      if (!name) {
         return;
       }
-      const [objName, prop] = p.split('.');
-      mapping[objName] = mapping[objName] || new Set();
-      const value = tagValue(t);
-      if (prop) {
-        mapping[objName].add([prop, value]);
+      let revisions = groups.get(name.group);
+      if (!revisions) {
+        revisions = new Map();
+        groups.set(name.group, revisions);
+      }
+      const revision = tagValue(t);
+      if (!(revisions.get(name.key) >= revision)) {
+        revisions.set(name.key, revision);
       }
     });
 
-    const hasChange =
-      (tagInfo.revision && maxRevision !== tagInfo.revision) || false;
-
-    const names = new Set();
-
-    Object.entries(mapping).forEach(([objName, props]) => {
-      if (names.has(objName)) {
-        return;
+    /**
+     * A group with several keys shows as a heading with children.
+     *
+     * Args and single keys show as one line each.
+     */
+    groups.forEach((revisions, group) => {
+      const nested = revisions.size > 1 && group !== '@' && group !== '';
+      if (nested) {
+        dependentKeys.push({ name: group });
       }
-      names.add(objName);
-      if (props.size > 1) {
-        dependentKeys.push({ name: objName });
-        props.forEach((p) => {
-          const changed = hasChange && p[1] > tagInfo.revision;
-          const obj = {
-            child: p[0],
-          };
-          if (changed) {
-            obj.changed = true;
-          }
-          dependentKeys.push(obj);
-        });
-      }
-      if (props.size === 1) {
-        const p = [...props][0];
-        const changed = hasChange && p[1] > tagInfo.revision;
-        const obj = {
-          name: objName + '.' + p[0],
-        };
-        if (changed) {
-          obj.changed = true;
+      revisions.forEach((revision, key) => {
+        const entry = nested
+          ? { child: key }
+          : { name: labelForTagName({ group, key }) };
+        if (hasChange && revision > tagInfo.revision) {
+          entry.changed = true;
         }
-        dependentKeys.push(obj);
-      }
-      if (props.size === 0) {
-        dependentKeys.push({ name: objName });
-      }
+        dependentKeys.push(entry);
+      });
     });
   }
 
-  return [...dependentKeys];
+  return dependentKeys;
 }
 
 export default class extends DebugPort {
