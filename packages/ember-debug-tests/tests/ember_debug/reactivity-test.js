@@ -222,8 +222,8 @@ module('Ember Debug - Reactivity', function (hooks) {
 
     let depNames = (label.dependentKeys ?? []).map((d) => d.name ?? d.child);
     assert.ok(
-      depNames.includes('args.title'),
-      `label depends on args.title (got: ${depNames.join(', ')})`,
+      depNames.includes('@title'),
+      `label depends on @title (got: ${depNames.join(', ')})`,
     );
     assert.ok(
       depNames.includes('this.count'),
@@ -247,7 +247,7 @@ module('Ember Debug - Reactivity', function (hooks) {
     assert.ok(countDep.changed, 'the changed dependency is flagged');
 
     let titleDep = update.dependentKeys.find(
-      (d) => (d.name ?? d.child) === 'args.title',
+      (d) => (d.name ?? d.child) === '@title',
     );
     assert.notOk(titleDep.changed, 'the unchanged dependency is not flagged');
   });
@@ -304,6 +304,13 @@ module('Ember Debug - Reactivity', function (hooks) {
 
     title = message.args.find((a) => a.name === '@title');
     assert.ok(title.changed, '@title is flagged as changed');
+
+    let source = message.args[message.args.indexOf(title) + 1];
+    assert.ok(
+      source?.child?.endsWith('.title'),
+      `@title names the controller property behind it (got: ${source?.child})`,
+    );
+    assert.ok(source.changed, 'the controller property is flagged as changed');
 
     count = message.properties.find((p) => p.name === 'count');
     assert.notOk(count.changed, 'count did not cause this re-render');
