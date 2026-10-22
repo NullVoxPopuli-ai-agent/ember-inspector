@@ -26,7 +26,7 @@ import { _backburner, join } from './lib/ember/runloop.js';
 import emberNames from './lib/ember-object-names.js';
 import getObjectName from './lib/get-object-name.js';
 import getRoute from './lib/get-route.js';
-import { getTagSubtags } from './lib/tracked-tags.js';
+import { getDependencyTags } from './lib/tracked-tags.js';
 
 let tagValue, tagValidate, track, tagForProperty;
 
@@ -319,12 +319,7 @@ function getTrackedDependencies(object, property, tagInfo) {
   if (HAS_GLIMMER_TRACKING) {
     const ownTag = tagForProperty(object, property);
     const tagNames = localTagNames(object);
-    const tags = getTagSubtags(tag, ownTag);
-    // A getter that consumed a single value gets that value's tag itself
-    // instead of a combinator, so the subtag walk misses it.
-    if (tag !== ownTag && !tags.includes(tag)) {
-      tags.push(tag);
-    }
+    const tags = getDependencyTags(tag, ownTag);
     const mapping = {};
     let maxRevision = tagValue(tag);
     tags.forEach((t) => {
