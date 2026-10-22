@@ -1,7 +1,7 @@
 import { GlimmerReference, GlimmerValidator } from './ember.js';
 import getObjectName from './get-object-name.js';
 import { inspect, typeOf } from './type-check.js';
-import { getTagTrackedTags } from './tracked-tags.js';
+import { getDependencyTags } from './tracked-tags.js';
 
 // Read-only accessors into @glimmer/validator and @glimmer/reference.
 // Unlike the export patches in object-inspector.js, reading these is safe
@@ -271,17 +271,13 @@ export default class RenderTreeReactivity {
   }
 
   _collectTagDependencies(tag, baseline) {
-    const tags = getTagTrackedTags(tag, null);
-
-    // A reference that consumed a single tag gets that very tag instead of
-    // a combinator, so the walked list misses it.
-    if (tag._propertyKey && !tags.includes(tag)) {
-      tags.unshift(tag);
-    }
-
+    const tags = getDependencyTags(tag, null);
     const byName = new Map();
 
     tags.forEach((t) => {
+      if (!t._propertyKey) {
+        return;
+      }
       const objectName = t._object ? getObjectName(t._object) : '';
       const name = (objectName ? `${objectName}.` : '') + t._propertyKey;
       const revision = valueForTag(t);
