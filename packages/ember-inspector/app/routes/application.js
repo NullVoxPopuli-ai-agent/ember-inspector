@@ -72,9 +72,10 @@ export default class ApplicationRoute extends Route {
   }
 
   /**
-   * The inspected object is a render tree node that just re-rendered:
-   * update the reactivity summary and refresh the changed markers on the
-   * matching property rows and on the `args` dependent keys.
+   * The inspected render tree node re-rendered.
+   *
+   * ember-debug sends the changed rows, and each row field replaces
+   * the field of the property row with the same name.
    */
   updateReactivity(options) {
     const mixinDetails = this.controller.mixinDetails;
@@ -85,42 +86,23 @@ export default class ApplicationRoute extends Route {
 
     set(mixinDetails, 'reactivity', options.reactivity);
 
-    const byName = {};
-    options.properties.forEach((prop) => {
-      byName[prop.name] = prop;
+    const byName = new Map();
+    options.rows.forEach((row) => {
+      byName.set(row.name, row);
     });
 
     mixinDetails.mixins.forEach((mixin) => {
       mixin.properties.forEach((property) => {
-        const prop = byName[property.name];
-        if (prop) {
-          set(property, 'reactivity', {
-            revision: prop.revision,
-            changed: prop.changed,
-          });
+        const row = byName.get(property.name);
+        if (!row) {
+          return;
         }
-        if (property.name === 'args' && options.args?.length) {
-          const deps = property.dependentKeys;
-          const holdsArgEntries =
-            !deps?.length || deps[0]?.name?.startsWith('@');
-          if (holdsArgEntries) {
-            set(property, 'dependentKeys', options.args);
+        byName.delete(property.name);
+        Object.keys(row).forEach((key) => {
+          if (key !== 'name') {
+            set(property, key, row[key]);
           }
-        }
-        // Rows synthesized from the render node's args (e.g. modifiers)
-        if (property.isRenderNodeArg) {
-          const entry = options.args?.find((a) => a.name === property.name);
-          if (entry) {
-            set(property, 'reactivity', { changed: entry.changed });
-            if (entry.inspect !== undefined) {
-              set(property, 'value', {
-                type: entry.type || property.value.type,
-                inspect: entry.inspect,
-                isCalculated: true,
-              });
-            }
-          }
-        }
+        });
       });
     });
   }
