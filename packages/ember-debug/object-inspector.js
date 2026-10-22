@@ -141,43 +141,15 @@ function isMandatorySetter(descriptor) {
   return false;
 }
 
-function reactivityArgEntries(report) {
-  const entries = [];
-  report.args.named.forEach((arg) => {
-    entries.push({
-      name: `@${arg.name}`,
-      changed: arg.changed || false,
-      inspect: arg.inspect,
-      type: arg.type,
-    });
-    (arg.dependencies || []).forEach((dep) => {
-      const child = { child: dep.name };
-      if (dep.changed) {
-        child.changed = true;
-      }
-      entries.push(child);
-    });
-  });
-  report.args.positional.forEach((arg) => {
-    entries.push({
-      name: `@${arg.name}`,
-      changed: arg.changed || false,
-      inspect: arg.inspect,
-      type: arg.type,
-    });
-  });
-  return entries;
-}
-
 /**
- * Build a read-only property item for a render node arg, so args show up
- * as regular rows on nodes whose instance has no `args` property (e.g.
- * modifiers).
+ * A read-only property row for one arg of a render node.
+ *
+ * The row is not readable off the instance,
+ * so updateReactivity refreshes it, not updateCurrentObject.
  */
 function argPropertyItem(arg) {
   return {
     name: `@${arg.name}`,
-    // keep updateCurrentObject from recomputing this from the instance
     isRenderNodeArg: true,
     isProperty: true,
     readOnly: true,
@@ -203,7 +175,7 @@ function argPropertyItem(arg) {
 function reactivitySummary(report) {
   const causes = new Set();
 
-  [...report.args.named, ...report.args.positional].forEach((arg) => {
+  function addArgCauses(arg) {
     if (arg.changed) {
       causes.add(`@${arg.name}`);
     }
@@ -212,7 +184,9 @@ function reactivitySummary(report) {
         causes.add(dep.name);
       }
     });
-  });
+  }
+  report.args.named.forEach(addArgCauses);
+  report.args.positional.forEach(addArgCauses);
   report.tracked.forEach((prop) => {
     if (prop.changed) {
       causes.add(labelForTagName({ group: 'this', key: prop.name }));
@@ -222,47 +196,61 @@ function reactivitySummary(report) {
   return {
     updateCount: report.updateCount,
     lastRender: report.lastRender,
-    causes: [...causes],
+    causes: Array.from(causes),
   };
 }
 
-function applyReactivityToProperties(mixins, report) {
-  const tracked = Object.create(null);
+/**
+ * The property rows that a reactivity report changes.
+ *
+ * - each consumed instance property gets its revision and changed flag
+ * - each arg is a row of its own
+ *
+ * The first send and every update use the same rows.
+ */
+function reactivityRows(report) {
+  const rows = [];
   report.tracked.forEach((prop) => {
-    tracked[prop.name] = prop;
+    rows.push({
+      name: prop.name,
+      reactivity: { revision: prop.revision, changed: prop.changed },
+    });
   });
+  report.args.named.forEach((arg) => rows.push(argPropertyItem(arg)));
+  report.args.positional.forEach((arg) => rows.push(argPropertyItem(arg)));
+  return rows;
+}
 
-  const argEntries = reactivityArgEntries(report);
-  let hasArgsProperty = false;
+/**
+ * Merge reactivity rows into the property rows of the first send.
+ *
+ * Arg rows do not exist yet, so they go first in the first mixin.
+ */
+function applyReactivityRows(mixins, rows) {
+  if (!mixins.length) {
+    return;
+  }
 
+  const byName = new Map();
   mixins.forEach((mixin) => {
     mixin.properties.forEach((item) => {
-      const t = tracked[item.name];
-      if (t) {
-        item.reactivity = { revision: t.revision, changed: t.changed };
-      }
-
-      // Surface the render node's args on the `args` property using the
-      // same dependent-keys UI computed properties use, unless something
-      // (e.g. a computed property) already claimed it.
-      if (item.name === 'args') {
-        hasArgsProperty = true;
-        if (argEntries.length && !item.dependentKeys?.length) {
-          item.dependentKeys = argEntries;
-        }
+      if (!byName.has(item.name)) {
+        byName.set(item.name, item);
       }
     });
   });
 
-  // Nodes whose instance has no `args` property (e.g. modifiers) get the
-  // node's args as read-only rows instead.
-  if (!hasArgsProperty && mixins.length) {
-    const items = [
-      ...report.args.named.map((arg) => argPropertyItem(arg)),
-      ...report.args.positional.map((arg) => argPropertyItem(arg)),
-    ];
-    mixins[0].properties.unshift(...items);
-  }
+  const argRows = [];
+  rows.forEach((row) => {
+    const item = byName.get(row.name);
+    if (item) {
+      Object.assign(item, row);
+    } else if (row.isRenderNodeArg) {
+      argRows.push(row);
+    }
+  });
+
+  mixins[0].properties = argRows.concat(mixins[0].properties);
 }
 
 function getTrackedDependencies(object, property, tagInfo) {
@@ -449,8 +437,7 @@ export default class extends DebugPort {
     this.sendMessage('updateReactivity', {
       objectId,
       reactivity: reactivitySummary(report),
-      properties: report.tracked,
-      args: reactivityArgEntries(report),
+      rows: reactivityRows(report),
     });
   }
 
@@ -668,16 +655,15 @@ export default class extends DebugPort {
     let details = this.mixinsForObject(object);
     let reactivity = null;
 
-    // When the object is inspected as a render tree node (e.g. pinned in
-    // the component tree), join the render node's reactivity report into
-    // the existing property display: mark the properties that changed in
-    // the node's most recent re-render and expose args as dependent keys
-    // of the `args` property.
+    /**
+     * An object inspected as a render tree node (pinned in the component
+     * tree) gets the reactivity rows of that node in its property list.
+     */
     const report = this.getReactivityReport(renderNodeId);
     if (report) {
       this.currentObject.renderNodeId = renderNodeId;
       this.currentObject.lastUpdateCount = report.updateCount;
-      applyReactivityToProperties(details.mixins, report);
+      applyReactivityRows(details.mixins, reactivityRows(report));
       reactivity = reactivitySummary(report);
     }
 

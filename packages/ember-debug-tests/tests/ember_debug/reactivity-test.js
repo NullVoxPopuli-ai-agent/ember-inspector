@@ -199,12 +199,9 @@ module('Ember Debug - Reactivity', function (hooks) {
       'nothing caused a re-render yet',
     );
 
-    let args = findProperty(message.details, 'args');
-    assert.ok(args, 'the args property is present');
-    assert.ok(
-      args.dependentKeys?.some((dep) => dep.name === '@title'),
-      'the args property lists @title as a dependent key',
-    );
+    let title = findProperty(message.details, '@title');
+    assert.ok(title, 'the @title arg is a row');
+    assert.true(title.readOnly, 'the @title row is read-only');
 
     let count = findProperty(message.details, 'count');
     assert.ok(count, 'the count property is present');
@@ -277,11 +274,17 @@ module('Ember Debug - Reactivity', function (hooks) {
       'count is reported as the cause of the re-render',
     );
 
-    let count = message.properties.find((p) => p.name === 'count');
-    assert.ok(count.changed, 'the count property is flagged as changed');
+    let count = message.rows.find((row) => row.name === 'count');
+    assert.ok(
+      count.reactivity.changed,
+      'the count property is flagged as changed',
+    );
 
-    let title = message.args.find((a) => a.name === '@title');
-    assert.notOk(title.changed, '@title did not cause the re-render');
+    let title = message.rows.find((row) => row.name === '@title');
+    assert.notOk(
+      title.reactivity.changed,
+      '@title did not cause the re-render',
+    );
 
     // Change the arg
     message = await captureMessage(
@@ -302,18 +305,21 @@ module('Ember Debug - Reactivity', function (hooks) {
       '@title is reported as a cause of the re-render',
     );
 
-    title = message.args.find((a) => a.name === '@title');
-    assert.ok(title.changed, '@title is flagged as changed');
+    title = message.rows.find((row) => row.name === '@title');
+    assert.ok(title.reactivity.changed, '@title is flagged as changed');
 
-    let source = message.args[message.args.indexOf(title) + 1];
+    let source = title.dependentKeys[0];
     assert.ok(
-      source?.child?.endsWith('.title'),
-      `@title names the controller property behind it (got: ${source?.child})`,
+      source?.name?.endsWith('.title'),
+      `@title names the controller property behind it (got: ${source?.name})`,
     );
     assert.ok(source.changed, 'the controller property is flagged as changed');
 
-    count = message.properties.find((p) => p.name === 'count');
-    assert.notOk(count.changed, 'count did not cause this re-render');
+    count = message.rows.find((row) => row.name === 'count');
+    assert.notOk(
+      count.reactivity.changed,
+      'count did not cause this re-render',
+    );
   });
 
   test('modifier args are exposed in the object inspector', async function (assert) {
@@ -336,19 +342,12 @@ module('Ember Debug - Reactivity', function (hooks) {
 
     assert.ok(message.reactivity, 'the modifier has a reactivity summary');
 
-    // The {{on}} modifier's debug instance carries a real `args` property
-    // here, so its args list as dependent keys of that row. (Instances
-    // without an `args` property get synthesized rows instead — covered
-    // by the next test.)
-    let argsRow = findProperty(message.details, 'args');
-    assert.ok(argsRow, 'the args are visible in the property list');
-    assert.ok(
-      argsRow.dependentKeys?.some((dep) => dep.name === '@0'),
-      'the positional arg shows under the args property',
-    );
+    let eventName = findProperty(message.details, '@0');
+    assert.ok(eventName, 'the positional arg is a row');
+    assert.strictEqual(eventName.value.inspect, '"click"', 'with its value');
   });
 
-  test('render nodes without an args property get synthesized arg rows', async function (assert) {
+  test('classic component args are rows', async function (assert) {
     await visit('/reactive');
 
     let tree = await getRenderTree();
