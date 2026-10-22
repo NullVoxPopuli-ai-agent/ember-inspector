@@ -17,6 +17,21 @@ function currentRevision() {
   return valueForTag(CURRENT_TAG);
 }
 
+/**
+ * The update info of a render node that has not re-rendered yet.
+ *
+ * @param {number|null} timestamp The render time, or null if unknown.
+ */
+function newUpdateInfo(timestamp) {
+  return {
+    updateCount: 0,
+    revision: currentRevision(),
+    previousRevision: null,
+    timestamp,
+    initialRender: true,
+  };
+}
+
 function isRef(value) {
   if (!value || typeof value !== 'object') {
     return false;
@@ -68,13 +83,7 @@ export default class RenderTreeReactivity {
     debugRenderTree.create = function (state, node) {
       const result = create.call(this, state, node);
       try {
-        self.updates.set(this.nodeFor(state), {
-          updateCount: 0,
-          revision: currentRevision(),
-          previousRevision: null,
-          timestamp: Date.now(),
-          initialRender: true,
-        });
+        self.updates.set(this.nodeFor(state), newUpdateInfo(Date.now()));
       } catch {
         // never break rendering
       }
@@ -91,7 +100,7 @@ export default class RenderTreeReactivity {
         const node = this.nodeFor(state);
         let info = self.updates.get(node);
         if (!info) {
-          info = self._newUpdateInfo();
+          info = newUpdateInfo(null);
           self.updates.set(node, info);
         }
         info.previousRevision = info.revision;
@@ -115,13 +124,7 @@ export default class RenderTreeReactivity {
         // baseline them at first capture so their first re-render can
         // still report what changed.
         if (!self.updates.has(node)) {
-          self.updates.set(node, {
-            updateCount: 0,
-            revision: currentRevision(),
-            previousRevision: null,
-            timestamp: null,
-            initialRender: true,
-          });
+          self.updates.set(node, newUpdateInfo(null));
         }
       } catch {
         // never break capturing
@@ -130,16 +133,6 @@ export default class RenderTreeReactivity {
     };
 
     this.originals = { create, update, captureNode };
-  }
-
-  _newUpdateInfo() {
-    return {
-      updateCount: 0,
-      revision: null,
-      previousRevision: null,
-      timestamp: null,
-      initialRender: true,
-    };
   }
 
   teardown() {
