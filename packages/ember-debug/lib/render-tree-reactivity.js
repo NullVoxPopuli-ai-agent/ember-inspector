@@ -43,17 +43,18 @@ function isRef(value) {
 }
 
 /**
- * Tracks *why* render tree nodes (components, route templates, modifiers —
- * every reactive output the debug render tree knows about) re-render.
+ * Records why render tree nodes re-render.
  *
- * It hooks the debug render tree's lifecycle to record when each node last
- * re-rendered (and the global revision at that point), and walks the tags
- * behind the node's args and the consumed properties of its instance, so
- * the inspector can show:
+ * A render node is any reactive output of the debug render tree:
+ * components, route templates, outlets, modifiers.
  *
- *   - what a render node depends on, and
- *   - which of those dependencies were dirtied since the previous render,
- *     i.e. what caused it to change most recently.
+ * The debug render tree hooks record the global revision of each re-render.
+ * The tags behind the args and the consumed instance properties
+ * give the inspector:
+ *
+ * - what a render node depends on
+ * - which of those dependencies changed after the previous render,
+ *   so what caused the most recent re-render
  */
 export default class RenderTreeReactivity {
   constructor(debugRenderTree) {
@@ -278,6 +279,7 @@ export default class RenderTreeReactivity {
   _collectTagDependencies(tag, baseline, nameForTag) {
     const tags = getDependencyTags(tag, null);
     const byName = new Map();
+    const dependencies = [];
 
     tags.forEach((t) => {
       const tagName = nameForTag(t);
@@ -286,17 +288,19 @@ export default class RenderTreeReactivity {
       }
       const name = labelForTagName(tagName);
       const revision = valueForTag(t);
+      const changed = baseline !== null && revision > baseline;
       const existing = byName.get(name);
-      if (!existing || revision > existing.revision) {
-        byName.set(name, {
-          name,
-          revision,
-          changed: baseline !== null && revision > baseline,
-        });
+      if (!existing) {
+        const dependency = { name, revision, changed };
+        byName.set(name, dependency);
+        dependencies.push(dependency);
+      } else if (revision > existing.revision) {
+        existing.revision = revision;
+        existing.changed = changed;
       }
     });
 
-    return [...byName.values()].sort((a, b) => b.revision - a.revision);
+    return dependencies.sort((a, b) => b.revision - a.revision);
   }
 
   _collectTracked(out, instance, baseline) {
@@ -315,9 +319,10 @@ export default class RenderTreeReactivity {
       return;
     }
 
-    // The tag meta holds a tag for every property of the instance that was
-    // ever consumed by a tracking frame — that is, the instance state this
-    // render node (or anything else) reactively depends on.
+    /**
+     * The tag meta holds a tag for each instance property
+     * that a tracking frame consumed.
+     */
     tagMeta.forEach((tag, key) => {
       const revision = valueForTag(tag);
       out.push({

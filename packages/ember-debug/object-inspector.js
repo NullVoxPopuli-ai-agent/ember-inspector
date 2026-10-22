@@ -173,15 +173,22 @@ function argPropertyItem(arg) {
 }
 
 function reactivitySummary(report) {
-  const causes = new Set();
+  const seen = new Set();
+  const causes = [];
+  function addCause(cause) {
+    if (!seen.has(cause)) {
+      seen.add(cause);
+      causes.push(cause);
+    }
+  }
 
   function addArgCauses(arg) {
     if (arg.changed) {
-      causes.add(`@${arg.name}`);
+      addCause(`@${arg.name}`);
     }
     (arg.dependencies || []).forEach((dep) => {
       if (dep.changed) {
-        causes.add(dep.name);
+        addCause(dep.name);
       }
     });
   }
@@ -189,14 +196,14 @@ function reactivitySummary(report) {
   report.args.positional.forEach(addArgCauses);
   report.tracked.forEach((prop) => {
     if (prop.changed) {
-      causes.add(labelForTagName({ group: 'this', key: prop.name }));
+      addCause(labelForTagName({ group: 'this', key: prop.name }));
     }
   });
 
   return {
     updateCount: report.updateCount,
     lastRender: report.lastRender,
-    causes: Array.from(causes),
+    causes,
   };
 }
 

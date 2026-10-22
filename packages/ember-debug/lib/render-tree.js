@@ -544,10 +544,9 @@ export default class RenderTree {
   }
 
   /**
-   * Get the reactivity report for a given render node id: what the node
-   * depends on (args and consumed instance properties) and which of those
-   * dependencies changed since its previous render — i.e. what caused it
-   * to change most recently.
+   * The reactivity report lists what the node depends on
+   * (args and consumed instance properties),
+   * and which of those changed after its previous render.
    *
    * @method getReactivity
    * @param {string} id A render node id.
