@@ -3,7 +3,6 @@
 
 # compiled output
 /dist/
-/tmp/
 /ember_debug/dist/
 
 # misc
@@ -11,4 +10,10 @@
 !.*
 .*/
 
+# vendor
+/vendor/
+
 /skeletons
+
+# build staging
+/tmp/

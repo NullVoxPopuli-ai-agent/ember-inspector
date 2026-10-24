@@ -1,27 +1,14 @@
-import loadConfigFromMeta from '@embroider/config-meta-loader';
-import { assert } from '@ember/debug';
+const ENV = {
+  modulePrefix: 'ember-inspector',
+  environment: import.meta.env.MODE,
+  rootURL: import.meta.env.ROOT_URL,
+  locationType: 'hash',
+  version: import.meta.env.EMBER_INSPECTOR_VERSION,
+  VERSION: import.meta.env.EMBER_INSPECTOR_VERSION,
+  emberVersionsSupported: import.meta.env.EMBER_VERSIONS_SUPPORTED,
+  previousEmberVersionsSupported: import.meta.env
+    .PREVIOUS_EMBER_VERSIONS_SUPPORTED,
+  APP: {},
+};
 
-const config = loadConfigFromMeta('ember-inspector');
-
-assert(
-  'config is not an object',
-  typeof config === 'object' && config !== null,
-);
-assert(
-  'modulePrefix was not detected on your config',
-  'modulePrefix' in config && typeof config.modulePrefix === 'string',
-);
-assert(
-  'locationType was not detected on your config',
-  'locationType' in config && typeof config.locationType === 'string',
-);
-assert(
-  'rootURL was not detected on your config',
-  'rootURL' in config && typeof config.rootURL === 'string',
-);
-assert(
-  'APP was not detected on your config',
-  'APP' in config && typeof config.APP === 'object',
-);
-
-export default config;
+export default ENV;
