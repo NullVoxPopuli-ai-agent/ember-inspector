@@ -3,4 +3,6 @@
 
 # compiled output
 /dist/
+
+# build staging
 /tmp/

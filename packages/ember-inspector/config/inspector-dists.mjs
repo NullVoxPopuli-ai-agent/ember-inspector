@@ -28,7 +28,7 @@ const emberDebugDist = join(
  * Vite builds the UI once, into this folder.
  * The plugin then copies it into each dist.
  */
-const UI_BUILD = 'tmp/ui';
+export const UI_BUILD = 'tmp/ui';
 
 const DIST = join(root, 'dist');
 const PLACEHOLDER = '{{EMBER_DIST}}';
@@ -46,20 +46,26 @@ const CHANGELOG = join(root, '../../CHANGELOG.md');
  * Each copy of the UI loads its own ember-debug build as `ember_debug.js`,
  * and picks its adapter by the dist name.
  *
- * testem runs the tests from dist/testing.
+ * For `EMBER_ENV=test`, only the `testing` layout is written, into dist/.
+ * testem serves that folder.
  */
 export function inspectorDists() {
   let mode;
   let command;
+  let isTest = process.env.EMBER_ENV === 'test';
 
   return {
     name: 'ember-inspector:dists',
 
-    config(_config, env) {
+    config(viteConfig, env) {
       mode = env.mode;
 
       if (env.isPreview) {
         return { build: { outDir: 'dist' } };
+      }
+
+      if (!isTest) {
+        delete viteConfig.build?.rolldownOptions?.input?.tests;
       }
 
       /**
@@ -136,14 +142,17 @@ export function inspectorDists() {
       });
     },
 
-    /**
-     * Rolldown also calls `closeBundle` after a failed build,
-     * but it calls `writeBundle` only after it wrote the files.
-     */
-    writeBundle() {
+    closeBundle(error) {
+      if (error) return;
+
       let ui = join(root, UI_BUILD);
 
       rmSync(DIST, { recursive: true, force: true });
+
+      if (isTest) {
+        writeTesting(ui, DIST, mode);
+        return;
+      }
 
       for (let [name, write] of Object.entries(DISTS)) {
         write(ui, join(DIST, name), mode);
@@ -298,7 +307,7 @@ function tabLabel(mode) {
     return `Ember [${process.env.EMBER_INSPECTOR_TAB}]`;
   }
 
-  if (mode === 'development') {
+  if (mode === 'development' && process.env.EMBER_ENV !== 'test') {
     return 'Ember [DEV]';
   }
 

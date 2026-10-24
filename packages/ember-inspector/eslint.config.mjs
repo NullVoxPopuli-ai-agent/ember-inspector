@@ -33,6 +33,7 @@ export default defineConfig([
     'dist/',
     'dist_prev/',
     'tmp/',
+    'vendor/',
     'coverage/',
     'skeletons/',
     '!**/.*',
@@ -93,7 +94,6 @@ export default defineConfig([
       '.prettierrc.js',
       '.stylelintrc.js',
       '.template-lintrc.js',
-      'config/**/*.js',
       'scripts/download-panes.js',
     ],
     plugins: {
@@ -117,11 +117,11 @@ export default defineConfig([
     plugins: {
       n,
     },
-    settings: {
+    rules: {
       /**
-       * The build runs on the Node version in the root .npmrc.
+       * The build config files use the dev dependencies.
        */
-      node: { version: '>=26.12.1' },
+      'n/no-unpublished-import': 'off',
     },
 
     languageOptions: {
