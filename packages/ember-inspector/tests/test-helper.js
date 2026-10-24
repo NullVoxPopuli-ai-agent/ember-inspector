@@ -3,16 +3,16 @@ import config from 'ember-inspector/config/environment';
 import * as QUnit from 'qunit';
 import { setApplication } from '@ember/test-helpers';
 import { setup } from 'qunit-dom';
-import { start as qunitStart, setupEmberOnerrorValidation } from 'ember-qunit';
+import { setupEmberOnerrorValidation, start as qunitStart } from 'ember-qunit';
+import { setTesting } from '@embroider/macros';
 import TestAdapter from './test-adapter';
 
 /**
- * we need to override the adapter that is set up in initializers/setup.js
- * for that we suffix the name of setup initializer with `-2` so that
- * this initializer comes right after it
+ * Replaces the adapter that `initializers/setup.js` registers.
  */
 Application.initializer({
-  name: `setup-2-override-adapter`,
+  name: 'setup-override-adapter',
+  after: 'setup',
   initialize(app) {
     app.register('service:adapter', TestAdapter);
   },
@@ -28,6 +28,11 @@ Application.instanceInitializer({
 });
 
 export function start() {
+  config.locationType = 'none';
+  config.APP.rootElement = '#ember-testing';
+  config.APP.autoboot = false;
+
+  setTesting(true);
   setApplication(Application.create(config.APP));
 
   window.NO_EMBER_DEBUG = true;
@@ -35,6 +40,5 @@ export function start() {
 
   setup(QUnit.assert);
   setupEmberOnerrorValidation();
-
   qunitStart();
 }
